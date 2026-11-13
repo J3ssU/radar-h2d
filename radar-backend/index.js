@@ -1,36 +1,27 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { Pool } = require('pg'); // Importar el cliente de PostgreSQL
-require('dotenv').config();
+const pool = require('./db');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(cors());
+app.use(cors({ origin: 'http://localhost:9000' }));
 app.use(express.json());
 
-// Configurar la conexión a PostgreSQL
-const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT,
-});
-
-// Probar la conexión a la base de datos
-pool.connect((err, client, release) => {
-  if (err) {
-    return console.error('Error adquiriendo cliente', err.stack);
-  }
-  console.log('Conexión exitosa a la base de datos PostgreSQL');
-  release();
-});
+// Rutas
+app.use('/api/dashboard', require('./routes/dashboard'));
 
 // Ruta de prueba
 app.get('/', (req, res) => {
   res.send('API del Sistema Radar funcionando y conectada');
 });
+
+// Probar la conexión a Supabase
+pool
+  .query('select 1')
+  .then(() => console.log('Conexión exitosa a Supabase'))
+  .catch((err) => console.error('No se pudo conectar a Supabase:', err.message));
 
 // Iniciar servidor
 app.listen(port, () => {
