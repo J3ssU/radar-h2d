@@ -1,6 +1,6 @@
 # Radar H2D — Contexto, progreso y siguientes pasos
 
-Actualizado: 16/11/2026
+Actualizado: 17/11/2026
 
 ## 1. Qué es el proyecto
 
@@ -65,11 +65,25 @@ Detalles técnicos relevantes:
 - Buscador, filtro de renovación, interruptor "Ocultar los ya renovados" (activo por defecto), orden por columnas, exportar CSV.
 - Los equipos FREMAR no aparecen (no tienen fecha de fin).
 
+### Renovar contrato con historial — implementado localmente
+- Botón en la ficha y botón directo en cada fila de cobranza.
+- Nuevo vencimiento obligatorio (posterior a hoy en La Paz y al vencimiento actual), año de renovación 2025–2028, responsable y motivo.
+- Actualiza la fecha y marca RENOVADO en el año seleccionado. No registra pagos ni cambia el importe o la fecha de inicio.
+- Historial visible en la ficha: fecha/hora en La Paz, responsable declarado, motivo, fechas y estados anteriores/nuevos.
+- Tabla `radar.historial_renovaciones`, creada en Supabase mediante `radar-backend/migrations/001_historial_renovaciones.sql`; RLS activo y sin permisos para anon/authenticated.
+- Guardado transaccional con bloqueo de fila y versión (`xmin`): rechaza fichas desactualizadas con HTTP 409. El contrato y el historial se guardan juntos o se revierten juntos.
+- Panel y cobranza se recargan tras guardar. No se renovaron contratos reales durante la implementación.
+- Aún no hay login: el nombre del responsable es manual, **no una identidad verificada**. Integrarlo con el usuario autenticado cuando se implemente Auth.
+- Los filtros e indicadores existentes siguen mostrando renovación 2026; el formulario permite elegir el año que corresponda.
+- Verificación: 8 pruebas unitarias y 1 de integración PostgreSQL con rollback, API HTTP, ESLint, build y apertura/validación del formulario en navegador.
+- Pruebas: `cd radar-backend` y `npm test`; integración opcional en PowerShell: `$env:RUN_DB_TESTS='1'; npm test; Remove-Item Env:RUN_DB_TESTS`.
+- La migración se aplica antes del backend en otras instalaciones; en este Supabase ya está aplicada. Implementación incluida en el repositorio junto con la migración y las pruebas.
+
 ### Código compartido
 `src/utils/` (`api.js`, `formato.js`, `contacto.js`, `estados.js`) y `src/components/FichaEquipo.vue`.
 
 ### API (`/api/dashboard`)
-`/`, `/filtros`, `/equipos`, `/equipos.csv`, `/equipos/:id`, `/cobranza`, `/cobranza.csv`. Consultas parametrizadas y con listas blancas para orden y filtros.
+`/`, `/filtros`, `/equipos`, `/equipos.csv`, `/equipos/:id`, `/cobranza`, `/cobranza.csv`, `POST /equipos/:id/renovar`. Consultas parametrizadas y con listas blancas para orden y filtros.
 
 ## 5. Supuestos pendientes de confirmar
 
@@ -87,12 +101,7 @@ Detalles técnicos relevantes:
 
 ## 7. Qué sigue (en orden sugerido)
 
-1. **Acción "Renovar" con historial de cambios.** Botón en la ficha y en la cobranza que:
-   - actualiza la fecha de fin del contrato y el estado de renovación,
-   - guarda quién/cuándo/qué cambió (tabla de auditoría nueva),
-   - saca el contrato de la lista de vencidos.
-
-   Esto resuelve el problema de los RENOVADO con fecha vieja.
+1. **Acción "Renovar" con historial de cambios: completada.** Ver sección 4. Queda asociar responsable a Supabase Auth cuando exista login y validar con el negocio qué año debe marcar cada renovación.
 2. **Cobranza para FREMAR** a partir de `historial_mensual` (FALTA PAGAR / FALTA PAGAR 2), una vez confirmado el significado.
 3. **Limpieza de datos pendiente** (sección 6).
 4. **Login con Supabase Auth.** Después habrá que crear políticas RLS y dejar de depender del rol postgres en el backend.

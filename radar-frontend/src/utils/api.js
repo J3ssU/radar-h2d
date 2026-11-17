@@ -11,3 +11,14 @@ export async function get(ruta, params) {
   if (!r.ok) throw new Error(`El servidor respondió ${r.status}`)
   return r.json()
 }
+
+export async function post(ruta, datos) {
+  const r = await fetch(urlApi(ruta), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(datos),
+  })
+  const resultado = await r.json()
+  if (!r.ok) throw new Error(resultado.error || `El servidor respondió ${r.status}`)
+  return resultado
+}

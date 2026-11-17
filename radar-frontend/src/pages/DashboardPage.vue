@@ -211,7 +211,7 @@
       </q-table>
     </q-card>
 
-    <FichaEquipo v-model="fichaAbierta" :equipo-id="fichaId" />
+    <FichaEquipo v-model="fichaAbierta" :equipo-id="fichaId" @renovado="cargar" />
   </q-page>
 </template>
 

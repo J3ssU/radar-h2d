@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { renovar } = require('../services/renovaciones');
 
 const router = express.Router();
 
@@ -197,7 +198,7 @@ router.get('/equipos/:id', async (req, res) => {
   const id = req.params.id;
   try {
     const { rows } = await pool.query(
-      `select r.id, o.nombre as org, r.nombre_cliente, r.documento_cliente, r.telefono_1, r.telefono_2,
+      `select r.id, r.xmin::text as version, o.nombre as org, r.nombre_cliente, r.documento_cliente, r.telefono_1, r.telefono_2,
               r.imei, r.sim, ${OPERADOR} as operador, r.modelo_gps, r.estado_gps,
               r.tipo_vehiculo, r.modelo_vehiculo, r.placa, r.chasis, r.motor,
               ${SUCURSAL} as sucursal, r.comercial, ${CREDITO} as estado_credito, r.notas,
@@ -214,7 +215,7 @@ router.get('/equipos/:id', async (req, res) => {
     const ficha = rows[0];
     const doc = (ficha.documento_cliente || '').trim();
 
-    const [historial, otros] = await Promise.all([
+    const [historial, otros, renovaciones] = await Promise.all([
       pool.query(
         `select etiqueta_mes as mes, valor_original as valor
          from radar.historial_mensual where registro_id = $1 order by posicion_columna`,
@@ -229,10 +230,25 @@ router.get('/equipos/:id', async (req, res) => {
             [doc, id]
           )
         : { rows: [] },
+      pool.query(`select id, creado_en, responsable, identidad_verificada, motivo, anio,
+                         fecha_fin_anterior::text, fecha_fin_nueva::text, estado_anterior, estado_nuevo
+                  from radar.historial_renovaciones where registro_id = $1
+                  order by creado_en desc, id desc`, [id]),
     ]);
-    res.json({ ficha, historial: historial.rows, otros: otros.rows });
+    res.json({ ficha, historial: historial.rows, otros: otros.rows, renovaciones: renovaciones.rows });
   } catch (e) {
     error500(res, e);
+  }
+});
+
+router.post('/equipos/:id/renovar', async (req, res) => {
+  try {
+    const resultado = await renovar(pool, req.params.id, req.body);
+    res.status(201).json(resultado);
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    console.error('No se pudo guardar la renovación:', e.message);
+    res.status(500).json({ error: 'No se pudo guardar la renovación. Vuelve a abrir la ficha para comprobar su estado antes de reintentar.' });
   }
 });
 

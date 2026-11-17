@@ -26,6 +26,46 @@
 
       <q-scroll-area v-else-if="ficha" class="col">
         <div class="q-pa-md q-gutter-y-lg">
+          <q-banner v-if="exito" class="bg-green-1 text-positive" role="status"
+            >Renovación guardada correctamente.</q-banner
+          >
+          <q-btn
+            color="primary"
+            icon="event_repeat"
+            label="Renovar contrato"
+            no-caps
+            @click="renovacionAbierta = true"
+          />
+          <div>
+            <div class="text-overline text-grey-7">Historial de renovaciones</div>
+            <div v-if="!ficha.renovaciones?.length" class="text-caption text-grey-7">
+              Sin renovaciones registradas en el sistema.
+            </div>
+            <q-list v-else bordered separator>
+              <q-item v-for="r in ficha.renovaciones" :key="r.id">
+                <q-item-section>
+                  <q-item-label
+                    >{{ fecha(r.fecha_fin_anterior) || 'Sin fecha' }} →
+                    {{ fecha(r.fecha_fin_nueva) }}</q-item-label
+                  >
+                  <q-item-label
+                    >Renovación {{ r.anio }}: {{ r.estado_anterior || 'Sin estado' }} →
+                    {{ r.estado_nuevo }}</q-item-label
+                  >
+                  <q-item-label caption
+                    >{{ momento(r.creado_en) }} · {{ r.responsable }} ({{
+                      r.identidad_verificada ? 'identidad verificada' : 'nombre declarado'
+                    }})</q-item-label
+                  >
+                  <q-item-label
+                    class="q-mt-xs"
+                    style="white-space: pre-wrap; overflow-wrap: anywhere"
+                    >{{ r.motivo }}</q-item-label
+                  >
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </div>
           <div v-for="s in secciones" :key="s.titulo">
             <div class="text-overline text-grey-7">{{ s.titulo }}</div>
             <div v-for="it in s.items" :key="it.label" class="row items-baseline q-py-xs">
@@ -97,11 +137,18 @@
       </q-scroll-area>
     </q-card>
   </q-dialog>
+  <RenovarContrato
+    v-if="ficha"
+    v-model="renovacionAbierta"
+    :equipo="ficha.ficha"
+    @renovado="alRenovar"
+  />
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { get } from '@/utils/api'
+import RenovarContrato from '@/components/RenovarContrato.vue'
 import { bs, fecha, limpio } from '@/utils/formato'
 import { telDudoso, whatsapp } from '@/utils/contacto'
 import { COLOR_ESTADO, CREDITO } from '@/utils/estados'
@@ -109,8 +156,9 @@ import { COLOR_ESTADO, CREDITO } from '@/utils/estados'
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   equipoId: { type: [Number, String], default: null },
+  renovarAlAbrir: Boolean,
 })
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'renovado'])
 
 const abierta = computed({
   get: () => props.modelValue,
@@ -120,16 +168,29 @@ const abierta = computed({
 const cargando = ref(false)
 const error = ref('')
 const ficha = ref(null)
+const renovacionAbierta = ref(false)
+const exito = ref(false)
+const momento = (valor) => new Date(valor).toLocaleString('es-BO', { timeZone: 'America/La_Paz' })
+async function alRenovar(id) {
+  emit('renovado', id)
+  await abrir(id)
+  exito.value = true
+}
 
 let token = 0
-async function abrir(id) {
+async function abrir(id, renovar = false) {
+  exito.value = false
+  renovacionAbierta.value = false
   const mio = ++token
   cargando.value = true
   error.value = ''
   ficha.value = null
   try {
     const d = await get(`/equipos/${id}`, {})
-    if (mio === token) ficha.value = d
+    if (mio === token) {
+      ficha.value = d
+      renovacionAbierta.value = renovar
+    }
   } catch (err) {
     if (mio === token) error.value = `No se pudo abrir la ficha. ${err.message}`
   } finally {
@@ -140,7 +201,7 @@ async function abrir(id) {
 watch(
   () => [props.modelValue, props.equipoId],
   ([abre, id]) => {
-    if (abre && id) abrir(id)
+    if (abre && id) abrir(id, props.renovarAlAbrir)
   },
   { immediate: true },
 )

@@ -194,6 +194,19 @@
           </q-td>
         </template>
 
+        <template #body-cell-acciones="props">
+          <q-td :props="props">
+            <q-btn
+              flat
+              dense
+              no-caps
+              color="primary"
+              icon="event_repeat"
+              label="Renovar"
+              @click.stop="abrirFicha(props.row.id, true)"
+            />
+          </q-td>
+        </template>
         <template #body-cell-renov="props">
           <q-td :props="props">
             <q-badge
@@ -205,7 +218,12 @@
       </q-table>
     </q-card>
 
-    <FichaEquipo v-model="fichaAbierta" :equipo-id="fichaId" />
+    <FichaEquipo
+      v-model="fichaAbierta"
+      :equipo-id="fichaId"
+      :renovar-al-abrir="renovarAlAbrir"
+      @renovado="aplicar"
+    />
   </q-page>
 </template>
 
@@ -244,7 +262,9 @@ const pagination = ref({ page: 1, rowsPerPage: 25, sortBy: null, descending: fal
 
 const fichaAbierta = ref(false)
 const fichaId = ref(null)
-function abrirFicha(id) {
+const renovarAlAbrir = ref(false)
+function abrirFicha(id, renovar = false) {
+  renovarAlAbrir.value = renovar
   fichaId.value = id
   fichaAbierta.value = true
 }
@@ -371,6 +391,7 @@ function textoDias(d) {
 }
 
 const columnas = [
+  { name: 'acciones', label: 'Acciones', field: 'id', align: 'left' },
   { name: 'cliente', label: 'Cliente', field: 'cliente', align: 'left', sortable: true },
   { name: 'contacto', label: 'Contacto', field: 'tel1', align: 'left' },
   { name: 'placa', label: 'Placa', field: 'placa', align: 'left', format: (v) => v || '—' },
