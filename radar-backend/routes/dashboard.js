@@ -35,6 +35,15 @@ const ORDEN = {
   estado: 'r.fecha_fin_contrato',
 };
 
+// Búsqueda por texto en cliente, placa, IMEI o documento. Agrega el parámetro y devuelve la condición (o '').
+function condBusqueda(texto, params) {
+  const q = String(texto || '').trim().slice(0, 60);
+  if (!q) return '';
+  params.push(`%${q.replace(/[\\%_]/g, '\\$&')}%`);
+  const n = `$${params.length}`;
+  return `(r.nombre_cliente ilike ${n} or r.placa ilike ${n} or r.imei ilike ${n} or r.documento_cliente ilike ${n})`;
+}
+
 // Arma el WHERE a partir de los filtros de la URL. Todo valor del usuario va como parámetro.
 function filtrar(query) {
   const params = [];
@@ -51,14 +60,8 @@ function filtrar(query) {
   if (query.operador) add(`${OPERADOR} = $$`, String(query.operador));
   if (VENC[query.venc]) cond.push(VENC[query.venc]);
 
-  const q = String(query.q || '').trim().slice(0, 60);
-  if (q) {
-    params.push(`%${q.replace(/[\\%_]/g, '\\$&')}%`);
-    const n = `$${params.length}`;
-    cond.push(
-      `(r.nombre_cliente ilike ${n} or r.placa ilike ${n} or r.imei ilike ${n} or r.documento_cliente ilike ${n})`
-    );
-  }
+  const busqueda = condBusqueda(query.q, params);
+  if (busqueda) cond.push(busqueda);
   return { where: cond.length ? ' where ' + cond.join(' and ') : '', params };
 }
 
@@ -228,6 +231,117 @@ router.get('/equipos/:id', async (req, res) => {
         : { rows: [] },
     ]);
     res.json({ ficha, historial: historial.rows, otros: otros.rows });
+  } catch (e) {
+    error500(res, e);
+  }
+});
+
+/* ---------- Cobranza ---------- */
+
+// Grupos de contratos según su fecha de fin, contando desde hoy (hora de Bolivia)
+const SEG_COND = {
+  por_vencer: `r.fecha_fin_contrato between ${HOY} and ${HOY} + 30`,
+  vencidos_30: `r.fecha_fin_contrato between ${HOY} - 30 and ${HOY} - 1`,
+  vencidos_90: `r.fecha_fin_contrato between ${HOY} - 90 and ${HOY} - 31`,
+  vencidos_mas: `r.fecha_fin_contrato < ${HOY} - 90`,
+};
+const SEGMENTOS = Object.keys(SEG_COND);
+const SEG_ETIQUETA = {
+  por_vencer: 'Vence en 30 días',
+  vencidos_30: 'Vencido hasta 30 días',
+  vencidos_90: 'Vencido de 31 a 90 días',
+  vencidos_mas: 'Vencido hace más de 90 días',
+};
+const SEG_CASE = `(case ${SEGMENTOS.map((k) => `when ${SEG_COND[k]} then '${k}'`).join(' ')} end)`;
+
+const ORDEN_COBRANZA = {
+  cliente: 'r.nombre_cliente',
+  fin: 'r.fecha_fin_contrato',
+  dias: 'r.fecha_fin_contrato',
+  importe: 'r.importe_contrato',
+  renov: RENOVACION,
+};
+
+// Filtros comunes de la cobranza (sin el grupo). Solo entran contratos con fecha de fin.
+function filtrarCobranza(query) {
+  const params = [];
+  const cond = ['r.fecha_fin_contrato is not null'];
+  if (query.ocultar === '1') cond.push(`r.estado_renovacion_2026 is distinct from 'RENOVADO'`);
+  if (query.renov) {
+    params.push(String(query.renov));
+    cond.push(`${RENOVACION} = $${params.length}`);
+  }
+  const busqueda = condBusqueda(query.q, params);
+  if (busqueda) cond.push(busqueda);
+  return { cond, params };
+}
+
+// Sin orden elegido: lo que vence primero arriba; en los vencidos, el más reciente arriba
+function ordenarCobranza(query, seg) {
+  const col = ORDEN_COBRANZA[query.sort];
+  if (!col) return `order by r.fecha_fin_contrato ${seg === 'por_vencer' ? 'asc' : 'desc'}, r.id`;
+  return `order by ${col} ${query.dir === 'desc' ? 'desc' : 'asc'} nulls last, r.id`;
+}
+
+// GET /api/dashboard/cobranza?seg&q&renov&ocultar=1&sort&dir&page&limit
+// -> conteo y valor de contratos por grupo, más la lista del grupo elegido
+router.get('/cobranza', async (req, res) => {
+  const seg = SEG_COND[req.query.seg] ? req.query.seg : 'por_vencer';
+  const { cond, params } = filtrarCobranza(req.query);
+  const base = cond.join(' and ');
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 200);
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  try {
+    const [resumen, filas] = await Promise.all([
+      pool.query(
+        `select ${SEG_CASE} as k, count(*)::int as n, coalesce(sum(r.importe_contrato), 0)::float8 as monto
+         ${FROM} where ${base} and ${SEG_CASE} is not null group by 1`,
+        params
+      ),
+      pool.query(
+        `select r.id, r.nombre_cliente as cliente, r.documento_cliente as documento,
+                r.telefono_1 as tel1, r.telefono_2 as tel2, r.placa, o.nombre as org,
+                r.fecha_fin_contrato::text as fin, (r.fecha_fin_contrato - ${HOY})::int as dias,
+                r.importe_contrato::float8 as importe, ${RENOVACION} as renov
+         ${FROM} where ${base} and ${SEG_COND[seg]}
+         ${ordenarCobranza(req.query, seg)}
+         limit ${limit} offset ${(page - 1) * limit}`,
+        params
+      ),
+    ]);
+    const porGrupo = new Map(resumen.rows.map((r) => [r.k, r]));
+    const segmentos = SEGMENTOS.map((k) => ({
+      k,
+      n: porGrupo.get(k)?.n ?? 0,
+      monto: porGrupo.get(k)?.monto ?? 0,
+    }));
+    res.json({ seg, segmentos, total: segmentos.find((s) => s.k === seg).n, rows: filas.rows });
+  } catch (e) {
+    error500(res, e);
+  }
+});
+
+// GET /api/dashboard/cobranza.csv?... -> mismos filtros; sin "seg" baja todos los grupos (máx. 20.000 filas)
+router.get('/cobranza.csv', async (req, res) => {
+  const seg = SEG_COND[req.query.seg] ? req.query.seg : null;
+  const { cond, params } = filtrarCobranza(req.query);
+  cond.push(seg ? SEG_COND[seg] : `${SEG_CASE} is not null`);
+  try {
+    const { rows } = await pool.query(
+      `select ${SEG_CASE} as segmento, r.nombre_cliente, r.documento_cliente, r.telefono_1, r.telefono_2,
+              r.placa, o.nombre as org, r.fecha_fin_contrato::text as fin,
+              (r.fecha_fin_contrato - ${HOY})::int as dias, r.importe_contrato, ${RENOVACION} as renov
+       ${FROM} where ${cond.join(' and ')} ${ordenarCobranza(req.query, seg)} limit 20000`,
+      params
+    );
+    const cab = ['Grupo', 'Cliente', 'Documento', 'Teléfono 1', 'Teléfono 2', 'Placa', 'Organización',
+      'Fin de contrato', 'Días (negativo = vencido)', 'Importe (Bs)', 'Renovación 2026'];
+    const cols = ['segmento', 'nombre_cliente', 'documento_cliente', 'telefono_1', 'telefono_2', 'placa', 'org',
+      'fin', 'dias', 'importe_contrato', 'renov'];
+    const valor = (r, c) => (c === 'segmento' ? SEG_ETIQUETA[r.segmento] : r[c]);
+    const lineas = [cab.map(celda).join(';'), ...rows.map((r) => cols.map((c) => celda(valor(r, c))).join(';'))];
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.send('﻿' + lineas.join('\r\n'));
   } catch (e) {
     error500(res, e);
   }

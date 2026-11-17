@@ -3,6 +3,10 @@
     <q-header elevated class="bg-primary text-white">
       <q-toolbar>
         <q-toolbar-title>Sistema Radar H2D</q-toolbar-title>
+        <q-tabs shrink no-caps>
+          <q-route-tab to="/" exact label="Panel" />
+          <q-route-tab to="/cobranza" label="Cobranza" />
+        </q-tabs>
       </q-toolbar>
     </q-header>
 
